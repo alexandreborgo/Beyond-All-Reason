@@ -2,22 +2,19 @@ local widget = widget ---@type Widget
 
 -- Testing:
 -- repair/build => kept same behavior (all turret focus the target)
--- CTRL + repair/build => *almost* all in range focus the target
--- 		some of the farthest nanos don't change focus in single target but do when using an area
--- 		TODO: investigate and fix (wrong coordinates are taken from nanos/targets to do calculation or formula is wrong)
+-- CTRL + repair/build => all in range focus the target
 -- repair/build in area => kept same behavior: only in range nano are receiving the command
 --		NOTE/TODO: the out of range nanos don't keep their old command (like if the player sent a stop command to them)
 --		validate if we want to keep this stop or keep the previous command (done by this widget, because it doesn't send command to out of range nanos)
 -- reclaim => kept same behavior (all turret focus the target)
 -- reclaim in area on metal or energy on the map => it is already working as wanted so keep it
--- CTRL + reclaim => *almost* all in range focus the target (I guess there's the same issue regarding the farthest nanos)
---		TODO: investigate and fix
+-- CTRL + reclaim => all in range focus the target
 -- reclaim in area on building (with CTRL and/or ALT)
 -- CTRL + reclaim in area
 -- 		=> both doesn't work I belive it is because of the interaction with cmd_area_commands_filter.lua
 --		TODO: investigate and fix
 -- guard => kept same behavior (all turret focus the target)
--- CTRL + guard =>  *almost* all in range guard the target (still farthest nanos to check)
+-- CTRL + guard =>  all in range guard the target 
 --		NOTE: if the target of the command is a con all turret in range of the con will guard it but they might not be able to reach the con's target
 --		I believe we need to keep as is
 
@@ -39,6 +36,7 @@ local spGiveOrderToUnit = Spring.GiveOrderToUnit
 local GetUnitDefID = Spring.GetUnitDefID
 local UnitDefs = UnitDefs
 local spGetUnitPosition = Spring.GetUnitPosition
+local spGetUnitBuildeeRadius = Spring.GetUnitBuildeeRadius
 
 -- taken from cmd_nanoturrets_assist_priority.lua 
 local nanoDefs = {}
@@ -53,19 +51,21 @@ function widget:CommandNotify(id, params, options)
 	-- and we keep the current behavior if not (should have no impact on how players play)
 	if not options.ctrl then return false end
 
-	-- when repair in area the engien handle as wanted
+	-- when repair in area the engine handle as wanted
 	if #params == 4 and id == CMD.REPAIR then return false end
 
-	local targetsPosition = {} -- { x, z } 
+	local targetsPosition = {} -- { x, z, r } x, z coordinates and radius 
 	if #params == 1 then
 		-- single target
-		local _, _, _, x, _, z = spGetUnitPosition(params[1], true)
-		targetsPosition[1] = { x = x or 0, z = z or 0 }
+		local x, _, z = spGetUnitPosition(params[1])
+		local buildeeRadius = spGetUnitBuildeeRadius(params[1])
+		targetsPosition[1] = { x = x or 0, z = z or 0, r = buildeeRadius }
 	elseif #params == 4 then
 		-- circle with potentially multiple targets inside
 		for _, unitID in ipairs(units) do
-			local _, _, _, x, _, z = spGetUnitPosition(unitID, true)
-			targetsPosition[#targetsPosition + 1] = { x = x or 0, z = z or 0 }
+			local x, _, z = spGetUnitPosition(unitID)
+			local buildeeRadius = spGetUnitBuildeeRadius(unitID)
+			targetsPosition[#targetsPosition + 1] = { x = x or 0, z = z or 0, r = buildeeRadius }
 		end
 	end
 
@@ -77,12 +77,15 @@ function widget:CommandNotify(id, params, options)
 
 		if nanoDefs[unitDefID] ~= nil then
 			-- coordinate of the nano
-			local _, _, _, x, _, z = spGetUnitPosition(unitID, true)
+			local x, _, z = spGetUnitPosition(unitID)
 
 			-- check if any of the target is in range
 			local inRange = false
 			for _, target in ipairs(targetsPosition) do
-				if (x - target.x) * (x - target.x) + (z - target.z) * (z - target.z) <= nanoDefs[unitDefID] * nanoDefs[unitDefID] then
+				local adjustedRange = nanoDefs[unitDefID] + target.r
+				local dx = x - target.x
+				local dz = z - target.z
+				if dx * dx + dz * dz <= adjustedRange * adjustedRange then
 					inRange = true
 					break
 				end
