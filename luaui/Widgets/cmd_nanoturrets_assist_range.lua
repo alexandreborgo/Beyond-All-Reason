@@ -1,22 +1,30 @@
 local widget = widget ---@type Widget
 
 -- Testing:
--- repair/build => kept same behavior (all turret focus the target)
--- CTRL + repair/build => all in range focus the target
--- repair/build in area => kept same behavior: only in range nano are receiving the command
---		NOTE/TODO: the out of range nanos don't keep their old command (like if the player sent a stop command to them)
---		validate if we want to keep this stop or keep the previous command (done by this widget, because it doesn't send command to out of range nanos)
--- reclaim => kept same behavior (all turret focus the target)
--- reclaim in area on metal or energy on the map => it is already working as wanted so keep it
--- CTRL + reclaim => all in range focus the target
--- reclaim in area on building (with CTRL and/or ALT)
--- CTRL + reclaim in area
--- 		=> both doesn't work I belive it is because of the interaction with cmd_area_commands_filter.lua
---		TODO: investigate and fix
--- guard => kept same behavior (all turret focus the target)
--- CTRL + guard =>  all in range guard the target 
---		NOTE: if the target of the command is a con all turret in range of the con will guard it but they might not be able to reach the con's target
---		I believe we need to keep as is
+-- Click only:
+-- 		repair/build 	=> kept same behavior (all turret focus the target)
+-- 		reclaim 		=> kept same behavior (all turret focus the target)
+-- 		guard 			=> kept same behavior (all turret focus the target)
+--
+-- CTRL + click:
+-- 		repair/build 		=> widget send command to only in range nanos
+-- 		reclaim	(m or e)	=> widget send command to only in range nanos
+-- 		reclaim (building)	=> widget send command to only in range nanos
+-- 		guard				=> widget send command to only in range nanos
+--
+-- Area:
+-- 		repair/build 		=> kept same behavior (only in range nanos are receiving the command other are stopped) provided by engine
+-- 		reclaim (m or e) 	=> kept same behavior (only in range nanos are receiving the command other KEEP THE PREVIOUS COMMAND) provided by engine
+-- 		reclaim building 	=> reclaiming building doesn't seem to work without Area Command Filters
+-- 							   it works by transforming the area order into a queue with all units in the area
+--  						   alt: reclaims all the targeted unit type
+-- 							   ctrl: reclaims all insine the area
+--  						   ctrl will always be in conflict with the two widgets
+--
+-- Notes:
+-- In case the engine handle it (for area) the out of range nanos don't keep their old command
+-- they receive a stop-like command by the engine
+-- validate if we want to keep this stop or keep the previous command when it's the widget
 
 function widget:GetInfo()
 	return {
@@ -25,7 +33,8 @@ function widget:GetInfo()
 		author  = "mreasyfrag",
 		date    = "17/05/2026",
 		license = "GNU GPL v2",
-		layer   = 0,
+		layer   = -1,
+		-- -1 to exec before unit_smart_area_reclaim or area reclaim command from metal or energy isn't received
 		enabled = true,
 	}
 end
@@ -33,10 +42,13 @@ end
 local spGetSelectedUnits = Spring.GetSelectedUnits
 local spGetUnitDefID = Spring.GetUnitDefID
 local spGiveOrderToUnit = Spring.GiveOrderToUnit
-local GetUnitDefID = Spring.GetUnitDefID
 local UnitDefs = UnitDefs
+local spGetUnitInCylinder = Spring.GetUnitsInCylinder
+local spGetFeatureInCylinder = Spring.GetFeaturesInCylinder
 local spGetUnitPosition = Spring.GetUnitPosition
 local spGetUnitBuildeeRadius = Spring.GetUnitBuildeeRadius
+local spGetFeaturePosition = Spring.GetFeaturePosition
+local spGetUnitHealth = Spring.GetUnitHealth
 
 -- taken from cmd_nanoturrets_assist_priority.lua 
 local nanoDefs = {}
@@ -46,33 +58,64 @@ for unitDefID, unitDef in pairs(UnitDefs) do
 	end
 end
 
+local function GetUnitPositionAndRadius(unitid)
+	local x, z, r
+	x, _, z = spGetUnitPosition(unitid)
+	r = spGetUnitBuildeeRadius(unitid) or 0
+	return x, z, r
+end
+
+local function GetFeaturePositionAndRadius(featureid)
+	local x, z
+	x, _, z = spGetFeaturePosition(featureid)
+	return x, z, 0
+end
+
+-- based on GetUnitOrFeaturePosition from cmd_commandinsert.lua
+local function GetUnitOrFeaturePositionAndBuildeeRadius(id)
+	if id < Game.maxUnits then
+		-- it's a unit
+		return GetUnitPositionAndRadius(id)
+	end
+	-- it's a feature
+	return GetFeaturePositionAndRadius(id - Game.maxUnits)
+end
+
 function widget:CommandNotify(id, params, options)
 	-- ctrl = smart command so we apply this only if crtl is pressed
 	-- and we keep the current behavior if not (should have no impact on how players play)
 	if not options.ctrl then return false end
 
-	-- when repair in area the engine handle as wanted
-	if #params == 4 and id == CMD.REPAIR then return false end
-
-	local targetsPosition = {} -- { x, z, r } x, z coordinates and radius 
+	local targetsPosition = {} -- { x, z, r } x, z coordinates and radius
 	if #params == 1 then
 		-- single target
-		local x, _, z = spGetUnitPosition(params[1])
-		local buildeeRadius = spGetUnitBuildeeRadius(params[1])
-		targetsPosition[1] = { x = x or 0, z = z or 0, r = buildeeRadius }
+		local x, z, r = GetUnitOrFeaturePositionAndBuildeeRadius(params[1])
+		targetsPosition[1] = { x = x , z = z , r = r }
 	elseif #params == 4 then
 		-- circle with potentially multiple targets inside
-		for _, unitID in ipairs(units) do
-			local x, _, z = spGetUnitPosition(unitID)
-			local buildeeRadius = spGetUnitBuildeeRadius(unitID)
-			targetsPosition[#targetsPosition + 1] = { x = x or 0, z = z or 0, r = buildeeRadius }
+		local x, _, z, r = params[1], params[2], params[3], params[4]
+
+		if id == CMD.REPAIR then
+			local units = spGetUnitInCylinder(x, z, r)
+			for _, unitID in ipairs(units) do
+				local health, maxHealth, _, _, buildProgress = spGetUnitHealth(unitID)
+				if health < maxHealth or buildProgress < 1 then
+					local x, z, r = GetUnitPositionAndRadius(unitID)
+					targetsPosition[#targetsPosition + 1] = { x = x, z = z, r = r }
+				end
+			end
+		elseif id == CMD.RECLAIM then
+			local features = spGetFeatureInCylinder(x, z, r)
+			for _, featureID in ipairs(features) do
+				local x, z, r = GetFeaturePositionAndRadius(featureID)
+				targetsPosition[#targetsPosition + 1] = { x = x, z = z, r = r }
+			end
 		end
 	end
 
 	local selectedUnits = spGetSelectedUnits()
 
-	for i = 1, #selectedUnits do
-		local unitID = selectedUnits[i]
+	for _, unitID in ipairs(selectedUnits) do
 		local unitDefID = spGetUnitDefID(unitID)
 
 		if nanoDefs[unitDefID] ~= nil then
@@ -90,11 +133,12 @@ function widget:CommandNotify(id, params, options)
 					break
 				end
 			end
-
 			if inRange then
 				spGiveOrderToUnit(unitID, id, params, options)
-			--else
-			--	not in range so don't change the current command	
+			else
+			--	not in range so don't change the current command
+			-- 	to have the same behavior as the engine, we send the stop command
+			--	spGiveOrderToUnit(unitID, CMD.STOP, {}, {})
 			end
 		else
 			-- the selected unit is not a nano so we pass the command
@@ -102,6 +146,6 @@ function widget:CommandNotify(id, params, options)
 		end
 	end
 	-- if a new command is given to units it was done earlier
-	-- other nanos that weren't included earlier are out of range so we stop the command 
+	-- other nanos that weren't included earlier are out of range so we don't need to pass the command
 	return true
 end
