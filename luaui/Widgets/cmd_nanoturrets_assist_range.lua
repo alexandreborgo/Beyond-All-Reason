@@ -60,14 +60,13 @@ function widget:CommandNotify(id, params, options)
 	if #params == 1 then
 		-- single target
 		local x, z, r
-		local id = params[1]
-		if id < Game.maxUnits then
+		if params[1] < Game.maxUnits then
 			-- it's a unit
-			x, _, z = spGetUnitPosition(id)
-			r = spGetUnitBuildeeRadius(id) or 0
+			x, _, z = spGetUnitPosition(params[1])
+			r = spGetUnitBuildeeRadius(params[1]) or 0
 		else
 			-- it's a feature
-			x, _, z = spGetFeaturePosition(id)
+			x, _, z = spGetFeaturePosition(params[1])
 			r = 0
 		end
 		targetsPosition[1] = { x = x , z = z , r = r }
