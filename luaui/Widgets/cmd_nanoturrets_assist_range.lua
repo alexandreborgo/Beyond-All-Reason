@@ -14,17 +14,13 @@ local widget = widget ---@type Widget
 --
 -- Area:
 -- 		repair/build 		=> kept same behavior (only in range nanos are receiving the command other are stopped) provided by engine
--- 		reclaim (m or e) 	=> kept same behavior (only in range nanos are receiving the command other KEEP THE PREVIOUS COMMAND) provided by engine
+-- 		reclaim (m or e) 	=> kept same behavior (only in range nanos are receiving the command other are stopped) provided by engine
+--							   if area reclaim while targetting a metal or wreck, the widget Smart area reclaim will make the out of range nanos keep their active command
 -- 		reclaim building 	=> reclaiming building doesn't seem to work without Area Command Filters
 -- 							   it works by transforming the area order into a queue with all units in the area
 --  						   alt: reclaims all the targeted unit type
 -- 							   ctrl: reclaims all insine the area
---  						   ctrl will always be in conflict with the two widgets
---
--- Notes:
--- In case the engine handle it (for area) the out of range nanos don't keep their old command
--- they receive a stop-like command by the engine
--- validate if we want to keep this stop or keep the previous command when it's the widget
+--  						   ctrl is a conflict between this widget and Area Command Filters widget
 
 function widget:GetInfo()
 	return {
@@ -86,6 +82,9 @@ function widget:CommandNotify(id, params, options)
 	-- and we keep the current behavior if not (should have no impact on how players play)
 	if not options.ctrl then return false end
 
+	-- area commands are handled by the engine as expected, if we try to handle it in this widget we will need to resolve conflicts with Area command filters widget 
+	if #params == 4 then return false end
+
 	local targetsPosition = {} -- { x, z, r } x, z coordinates and radius
 	if #params == 1 then
 		-- single target
@@ -95,7 +94,7 @@ function widget:CommandNotify(id, params, options)
 		-- circle with potentially multiple targets inside
 		local x, _, z, r = params[1], params[2], params[3], params[4]
 
-		if id == CMD.REPAIR then
+		if id == CMD.REPAIR or id == CMD.RECLAIM then
 			local units = spGetUnitInCylinder(x, z, r)
 			for _, unitID in ipairs(units) do
 				local health, maxHealth, _, _, buildProgress = spGetUnitHealth(unitID)
@@ -136,8 +135,8 @@ function widget:CommandNotify(id, params, options)
 			if inRange then
 				spGiveOrderToUnit(unitID, id, params, options)
 			else
-			--	not in range so don't change the current command
-			-- 	to have the same behavior as the engine, we send the stop command
+			--	not in range so don't pass the command
+			-- 	to have the same behavior as the engine (on area), we can send the stop command
 			--	spGiveOrderToUnit(unitID, CMD.STOP, {}, {})
 			end
 		else
