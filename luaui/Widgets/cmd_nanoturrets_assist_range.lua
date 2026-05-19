@@ -1,6 +1,6 @@
 local widget = widget ---@type Widget
 
--- Testing:
+-- How it works:
 -- Click only:
 -- 		repair/build 	=> kept same behavior (all turret focus the target)
 -- 		reclaim 		=> kept same behavior (all turret focus the target)
@@ -13,14 +13,12 @@ local widget = widget ---@type Widget
 -- 		guard				=> widget send command to only in range nanos
 --
 -- Area:
+-- 		area commands are not handled by this widget
 -- 		repair/build 		=> kept same behavior (only in range nanos are receiving the command other are stopped) provided by engine
 -- 		reclaim (m or e) 	=> kept same behavior (only in range nanos are receiving the command other are stopped) provided by engine
 --							   if area reclaim while targetting a metal or wreck, the widget Smart area reclaim will make the out of range nanos keep their active command
--- 		reclaim building 	=> reclaiming building doesn't seem to work without Area Command Filters
--- 							   it works by transforming the area order into a queue with all units in the area
---  						   alt: reclaims all the targeted unit type
--- 							   ctrl: reclaims all insine the area
---  						   ctrl is a conflict between this widget and Area Command Filters widget
+-- 		reclaim building 	=> kept same behavior handled by Area Command Filters (and some other widgets)
+-- 							   ctrl would be a conflict between this widget and Area Command Filters widget
 
 function widget:GetInfo()
 	return {
@@ -29,8 +27,7 @@ function widget:GetInfo()
 		author  = "mreasyfrag",
 		date    = "17/05/2026",
 		license = "GNU GPL v2",
-		layer   = -1,
-		-- -1 to exec before unit_smart_area_reclaim or area reclaim command from metal or energy isn't received
+		layer   = 0,
 		enabled = true,
 	}
 end
@@ -39,12 +36,9 @@ local spGetSelectedUnits = Spring.GetSelectedUnits
 local spGetUnitDefID = Spring.GetUnitDefID
 local spGiveOrderToUnit = Spring.GiveOrderToUnit
 local UnitDefs = UnitDefs
-local spGetUnitInCylinder = Spring.GetUnitsInCylinder
-local spGetFeatureInCylinder = Spring.GetFeaturesInCylinder
 local spGetUnitPosition = Spring.GetUnitPosition
 local spGetUnitBuildeeRadius = Spring.GetUnitBuildeeRadius
 local spGetFeaturePosition = Spring.GetFeaturePosition
-local spGetUnitHealth = Spring.GetUnitHealth
 
 -- taken from cmd_nanoturrets_assist_priority.lua 
 local nanoDefs = {}
@@ -52,29 +46,6 @@ for unitDefID, unitDef in pairs(UnitDefs) do
 	if unitDef.isBuilder and not unitDef.canMove and not unitDef.isFactory then
 		nanoDefs[unitDefID] = unitDef.buildDistance
 	end
-end
-
-local function GetUnitPositionAndRadius(unitid)
-	local x, z, r
-	x, _, z = spGetUnitPosition(unitid)
-	r = spGetUnitBuildeeRadius(unitid) or 0
-	return x, z, r
-end
-
-local function GetFeaturePositionAndRadius(featureid)
-	local x, z
-	x, _, z = spGetFeaturePosition(featureid)
-	return x, z, 0
-end
-
--- based on GetUnitOrFeaturePosition from cmd_commandinsert.lua
-local function GetUnitOrFeaturePositionAndBuildeeRadius(id)
-	if id < Game.maxUnits then
-		-- it's a unit
-		return GetUnitPositionAndRadius(id)
-	end
-	-- it's a feature
-	return GetFeaturePositionAndRadius(id - Game.maxUnits)
 end
 
 function widget:CommandNotify(id, params, options)
@@ -88,28 +59,18 @@ function widget:CommandNotify(id, params, options)
 	local targetsPosition = {} -- { x, z, r } x, z coordinates and radius
 	if #params == 1 then
 		-- single target
-		local x, z, r = GetUnitOrFeaturePositionAndBuildeeRadius(params[1])
-		targetsPosition[1] = { x = x , z = z , r = r }
-	elseif #params == 4 then
-		-- circle with potentially multiple targets inside
-		local x, _, z, r = params[1], params[2], params[3], params[4]
-
-		if id == CMD.REPAIR or id == CMD.RECLAIM then
-			local units = spGetUnitInCylinder(x, z, r)
-			for _, unitID in ipairs(units) do
-				local health, maxHealth, _, _, buildProgress = spGetUnitHealth(unitID)
-				if health < maxHealth or buildProgress < 1 then
-					local x, z, r = GetUnitPositionAndRadius(unitID)
-					targetsPosition[#targetsPosition + 1] = { x = x, z = z, r = r }
-				end
-			end
-		elseif id == CMD.RECLAIM then
-			local features = spGetFeatureInCylinder(x, z, r)
-			for _, featureID in ipairs(features) do
-				local x, z, r = GetFeaturePositionAndRadius(featureID)
-				targetsPosition[#targetsPosition + 1] = { x = x, z = z, r = r }
-			end
+		local x, z, r
+		local id = params[1]
+		if id < Game.maxUnits then
+			-- it's a unit
+			x, _, z = spGetUnitPosition(id)
+			r = spGetUnitBuildeeRadius(id) or 0
+		else
+			-- it's a feature
+			x, _, z = spGetFeaturePosition(id)
+			r = 0
 		end
+		targetsPosition[1] = { x = x , z = z , r = r }
 	end
 
 	local selectedUnits = spGetSelectedUnits()
