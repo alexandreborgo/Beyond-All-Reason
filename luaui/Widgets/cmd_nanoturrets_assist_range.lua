@@ -41,6 +41,21 @@ function widget:CommandNotify(id, params, options)
 	if options.ctrl then return false end
 	if #params ~= 1 then return false end
 
+	-- we only handle REPAIR, RECLAIM and GUARD commands
+	if id ~= CMD.REPAIR and id ~= CMD.RECLAIM and id ~= CMD.GUARD then return false end
+
+	local selectedUnits = spGetSelectedUnits()
+
+	-- we only handle the command if at least one nano is selected
+	local hasNano = false
+	for _, unitID in ipairs(selectedUnits) do
+		if nanoDefs[spGetUnitDefID(unitID)] then
+			hasNano = true
+			break
+		end
+	end
+	if not hasNano then return false end
+
 	local tx, tz, tr
 
 	if params[1] < maxUnits then
@@ -55,8 +70,6 @@ function widget:CommandNotify(id, params, options)
 
 	-- tx is nil if target died before the command was processed
 	if not tx then return false end
-
-	local selectedUnits = spGetSelectedUnits()
 
 	for _, unitID in ipairs(selectedUnits) do
 		local unitDefID = spGetUnitDefID(unitID)
