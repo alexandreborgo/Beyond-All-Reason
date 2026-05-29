@@ -53,6 +53,9 @@ function widget:CommandNotify(id, params, options)
 		tr = 0
 	end
 
+	-- tx is nil if target died before the command was processed
+	if not tx then return false end
+
 	local selectedUnits = spGetSelectedUnits()
 
 	for _, unitID in ipairs(selectedUnits) do
@@ -60,13 +63,15 @@ function widget:CommandNotify(id, params, options)
 
 		if nanoDefs[unitDefID] ~= nil then
 			local nx, _, nz = spGetUnitPosition(unitID)
-
-			local adjustedRange = nanoDefs[unitDefID] + tr
-			local dx = nx - tx
-			local dz = nz - tz
-			if dx * dx + dz * dz <= adjustedRange * adjustedRange then
-				-- in range
-				spGiveOrderToUnit(unitID, id, params, options)
+			-- nx is nil if nano died before the command was processed
+			if nx then
+				local adjustedRange = nanoDefs[unitDefID] + tr
+				local dx = nx - tx
+				local dz = nz - tz
+				if dx * dx + dz * dz <= adjustedRange * adjustedRange then
+					-- in range
+					spGiveOrderToUnit(unitID, id, params, options)
+				end
 			end
 		else
 			-- the selected unit is not a nano so we pass the command
