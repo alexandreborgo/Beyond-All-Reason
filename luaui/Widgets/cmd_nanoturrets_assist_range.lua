@@ -14,7 +14,8 @@ function widget:GetInfo()
 		author  = "mreasyfrag",
 		date    = "30/05/2026",
 		license = "GNU GPL v2",
-		layer   = 0,
+		layer   = -1,
+		-- -1 to be executed before cmd_no_duplicate_orders.lua that break the behavior when using right click to repair on the second click
 		enabled = true,
 	}
 end
